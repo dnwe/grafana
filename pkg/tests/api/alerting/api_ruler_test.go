@@ -7,9 +7,11 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/google/uuid"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
@@ -65,224 +67,174 @@ func TestIntegrationAlertRulePermissions(t *testing.T) {
 	createRule(t, apiClient, "folder2")
 
 	// With the rules created, let's make sure that rule definitions are stored.
-	{
-		u := fmt.Sprintf("http://grafana:password@%s/api/ruler/grafana/api/v1/rules", grafanaListedAddr)
-		// nolint:gosec
-		resp, err := http.Get(u)
-		require.NoError(t, err)
-		t.Cleanup(func() {
-			err := resp.Body.Close()
-			require.NoError(t, err)
+	allRules, status, _ := apiClient.GetAllRulesWithStatus(t)
+	require.Equal(t, http.StatusOK, status)
+	allExport, status, _ := apiClient.ExportRulesWithStatus(t, &apimodels.AlertRulesExportParameters{
+		ExportQueryParams: apimodels.ExportQueryParams{Format: "json"},
+	})
+	require.Equal(t, http.StatusOK, status)
+
+	t.Run("when user has all permissions", func(t *testing.T) {
+		t.Run("Get all returns all rules", func(t *testing.T) {
+			expectedGetNamespaceResponseBody := `{"folder1":[{"name":"arulegroup","interval":"1m","rules":[{"annotations":{"annotation1":"val1"},"expr":"","for":"2m","labels":{"label1":"val1"},"grafana_alert":{"id":1,"orgId":1,"title":"rule under folder folder1","condition":"A","data":[{"refId":"A","queryType":"","relativeTimeRange":{"from":18000,"to":10800},"datasourceUid":"__expr__","model":{"expression":"2 + 3 > 1","intervalMs":1000,"maxDataPoints":43200,"type":"math"}}],"updated":"2021-02-21T01:10:30Z","intervalSeconds":60,"is_paused":false,"version":1,"uid":"uid","namespace_uid":"folder1","namespace_id":1,"rule_group":"arulegroup","no_data_state":"NoData","exec_err_state":"Alerting"}}]}],"folder2":[{"name":"arulegroup","interval":"1m","rules":[{"annotations":{"annotation1":"val1"},"expr":"","for":"2m","labels":{"label1":"val1"},"grafana_alert":{"id":2,"orgId":1,"title":"rule under folder folder2","condition":"A","data":[{"refId":"A","queryType":"","relativeTimeRange":{"from":18000,"to":10800},"datasourceUid":"__expr__","model":{"expression":"2 + 3 > 1","intervalMs":1000,"maxDataPoints":43200,"type":"math"}}],"updated":"2021-02-21T01:10:30Z","intervalSeconds":60,"is_paused":false,"version":1,"uid":"uid","namespace_uid":"folder2","namespace_id":2,"rule_group":"arulegroup","no_data_state":"NoData","exec_err_state":"Alerting"}}]}]}`
+			var expected apimodels.NamespaceConfigResponse
+			require.NoError(t, json.Unmarshal([]byte(expectedGetNamespaceResponseBody), &expected))
+
+			diff := cmp.Diff(expected, allRules, cmp.FilterPath(func(path cmp.Path) bool {
+				return strings.Contains(path.String(), "GrafanaManagedAlert.Updated") ||
+					strings.Contains(path.String(), "GrafanaManagedAlert.UID") ||
+					strings.Contains(path.String(), "GrafanaManagedAlert.ID") ||
+					strings.Contains(path.String(), "GrafanaManagedAlert.Data.Model")
+			}, cmp.Ignore()))
+
+			require.Empty(t, diff)
 		})
-		b, err := io.ReadAll(resp.Body)
-		require.NoError(t, err)
 
-		assert.Equal(t, resp.StatusCode, 200)
+		t.Run("Get by folder returns groups in folder", func(t *testing.T) {
+			rules, status, _ := apiClient.GetAllRulesGroupInFolderWithStatus(t, "folder1")
+			require.Equal(t, http.StatusAccepted, status)
+			require.Contains(t, rules, "folder1")
+			require.Len(t, rules["folder1"], 1)
+			require.Equal(t, allRules["folder1"], rules["folder1"])
+		})
 
-		body, _ := rulesNamespaceWithoutVariableValues(t, b)
-		expectedGetNamespaceResponseBody := `
-		{
-		   "folder1":[
-			  {
-				 "name":"arulegroup",
-				 "interval":"1m",
-				 "rules":[
-					{
-						"annotations": {
-							"annotation1": "val1"
-					   },
-					   "expr":"",
-					   "for": "2m",
-					   "labels": {
-							"label1": "val1"
-					   },
-					   "grafana_alert":{
-						  "id":1,
-						  "orgId":1,
-						  "title":"rule under folder folder1",
-						  "condition":"A",
-						  "data":[
-		                     {
-		                        "refId":"A",
-		                        "queryType":"",
-		                        "relativeTimeRange":{
-		                           "from":18000,
-		                           "to":10800
-		                        },
-		                        "datasourceUid":"__expr__",
-								"model":{
-		                           "expression":"2 + 3 \u003E 1",
-		                           "intervalMs":1000,
-		                           "maxDataPoints":43200,
-		                           "type":"math"
-		                        }
-		                     }
-		                  ],
-						  "updated":"2021-02-21T01:10:30Z",
-						  "intervalSeconds":60,
-						  "is_paused":false,
-						  "version":1,
-						  "uid":"uid",
-						  "namespace_uid":"nsuid",
-						  "namespace_id":1,
-						  "rule_group":"arulegroup",
-						  "no_data_state":"NoData",
-						  "exec_err_state":"Alerting"
-					   }
-					}
-				 ]
-			  }
-		   ],
-		"folder2":[
-			{
-			   "name":"arulegroup",
-			   "interval":"1m",
-			   "rules":[
-				  {
-					  "annotations": {
-						  "annotation1": "val1"
-					 },
-					 "expr":"",
-					 "for": "2m",
-					 "labels": {
-						  "label1": "val1"
-					 },
-					 "grafana_alert":{
-						"id":2,
-						"orgId":1,
-						"title":"rule under folder folder2",
-						"condition":"A",
-						"data":[
-		                     {
-		                        "refId":"A",
-		                        "queryType":"",
-		                        "relativeTimeRange":{
-		                           "from":18000,
-		                           "to":10800
-		                        },
-		                        "datasourceUid":"__expr__",
-								"model":{
-		                           "expression":"2 + 3 \u003E 1",
-		                           "intervalMs":1000,
-		                           "maxDataPoints":43200,
-		                           "type":"math"
-		                        }
-		                     }
-		                  ],
-						"updated":"2021-02-21T01:10:30Z",
-						"intervalSeconds":60,
-						"is_paused":false,
-						"version":1,
-						"uid":"uid",
-						"namespace_uid":"nsuid",
-						"namespace_id":2,
-						"rule_group":"arulegroup",
-						"no_data_state":"NoData",
-						"exec_err_state":"Alerting"
-					 }
-				  }
-			   ]
-			}
-		 ]
-		}`
-		assert.JSONEq(t, expectedGetNamespaceResponseBody, body)
+		t.Run("Get group returns a single group", func(t *testing.T) {
+			rules := apiClient.GetRulesGroup(t, "folder2", allRules["folder2"][0].Name)
+			cmp.Diff(allRules["folder2"][0], rules.GettableRuleGroupConfig)
+		})
 
+		t.Run("Export returns all rules", func(t *testing.T) {
+			expectedRaw := `{"apiVersion":1,"groups":[{"orgId":1,"name":"arulegroup","folder":"folder1","interval":"1m","rules":[{"uid":"b8170bb9-48c1-44b6-ba3a-23bbf502a031","title":"rule under folder folder1","condition":"A","data":[{"refId":"A","relativeTimeRange":{"from":18000,"to":10800},"datasourceUid":"__expr__","model":{"expression":"2 + 3 \u003e 1","intervalMs":1000,"maxDataPoints":43200,"type":"math"}}],"noDataState":"NoData","execErrState":"Alerting","for":"2m","annotations":{"annotation1":"val1"},"labels":{"label1":"val1"},"isPaused":false}]},{"orgId":1,"name":"arulegroup","folder":"folder2","interval":"1m","rules":[{"uid":"c88ca951-2512-4552-9561-29351160c7a9","title":"rule under folder folder2","condition":"A","data":[{"refId":"A","relativeTimeRange":{"from":18000,"to":10800},"datasourceUid":"__expr__","model":{"expression":"2 + 3 \u003e 1","intervalMs":1000,"maxDataPoints":43200,"type":"math"}}],"noDataState":"NoData","execErrState":"Alerting","for":"2m","annotations":{"annotation1":"val1"},"labels":{"label1":"val1"},"isPaused":false}]}]}`
+			var expected apimodels.AlertingFileExport
+			require.NoError(t, json.Unmarshal([]byte(expectedRaw), &expected))
+
+			diff := cmp.Diff(expected, allExport, cmp.FilterPath(func(path cmp.Path) bool {
+				return path.String() == "Groups.Rules.UID"
+			}, cmp.Ignore()))
+
+			require.Empty(t, diff)
+		})
+
+		t.Run("Export from one folder", func(t *testing.T) {
+			expected := allExport.Groups[0]
+			export, status, _ := apiClient.ExportRulesWithStatus(t, &apimodels.AlertRulesExportParameters{
+				ExportQueryParams: apimodels.ExportQueryParams{Format: "json"},
+				FolderUID:         []string{"folder1"},
+			})
+			require.Equal(t, http.StatusOK, status)
+
+			require.Len(t, export.Groups, 1)
+			require.Equal(t, expected, export.Groups[0])
+		})
+
+		t.Run("Export from one group", func(t *testing.T) {
+			expected := allExport.Groups[0]
+			export, status, _ := apiClient.ExportRulesWithStatus(t, &apimodels.AlertRulesExportParameters{
+				ExportQueryParams: apimodels.ExportQueryParams{Format: "json"},
+				FolderUID:         []string{"folder1"},
+				GroupName:         expected.Name,
+			})
+			require.Equal(t, http.StatusOK, status)
+
+			require.Len(t, export.Groups, 1)
+			require.Equal(t, expected, export.Groups[0])
+		})
+
+		t.Run("Export single rule", func(t *testing.T) {
+			expected := allExport.Groups[0]
+			export, status, _ := apiClient.ExportRulesWithStatus(t, &apimodels.AlertRulesExportParameters{
+				ExportQueryParams: apimodels.ExportQueryParams{Format: "json"},
+				RuleUID:           expected.Rules[0].UID,
+			})
+			require.Equal(t, http.StatusOK, status)
+
+			require.Len(t, export.Groups, 1)
+			require.Equal(t, expected, export.Groups[0])
+		})
+	})
+
+	t.Run("when permissions for folder2 removed", func(t *testing.T) {
 		// remove permissions from folder2
 		removeFolderPermission(t, permissionsStore, 1, userID, org.RoleEditor, "folder2")
 		apiClient.ReloadCachedPermissions(t)
 
-		// make sure that folder2 is not included in the response
-		// nolint:gosec
-		resp, err = http.Get(u)
-		require.NoError(t, err)
-		t.Cleanup(func() {
-			err := resp.Body.Close()
-			require.NoError(t, err)
+		t.Run("Get all returns all rules", func(t *testing.T) {
+			newAll, status, _ := apiClient.GetAllRulesWithStatus(t)
+			require.Equal(t, http.StatusOK, status)
+			require.NotContains(t, newAll, "folder2")
+			require.Contains(t, newAll, "folder1")
 		})
-		b, err = io.ReadAll(resp.Body)
-		require.NoError(t, err)
 
-		assert.Equal(t, resp.StatusCode, 200)
-
-		body, _ = rulesNamespaceWithoutVariableValues(t, b)
-		expectedGetNamespaceResponseBody = `
-		{
-		   "folder1":[
-			  {
-				 "name":"arulegroup",
-				 "interval":"1m",
-				 "rules":[
-					{
-						"annotations": {
-							"annotation1": "val1"
-					   },
-					   "expr":"",
-					   "for": "2m",
-					   "labels": {
-							"label1": "val1"
-					   },
-					   "grafana_alert":{
-						  "id":1,
-						  "orgId":1,
-						  "title":"rule under folder folder1",
-						  "condition":"A",
-						  "data":[
-		                     {
-		                        "refId":"A",
-		                        "queryType":"",
-		                        "relativeTimeRange":{
-		                           "from":18000,
-		                           "to":10800
-		                        },
-		                        "datasourceUid":"__expr__",
-								"model":{
-		                           "expression":"2 + 3 \u003E 1",
-		                           "intervalMs":1000,
-		                           "maxDataPoints":43200,
-		                           "type":"math"
-		                        }
-		                     }
-		                  ],
-						  "updated":"2021-02-21T01:10:30Z",
-						  "intervalSeconds":60,
-						  "is_paused":false,
-						  "version":1,
-						  "uid":"uid",
-						  "namespace_uid":"nsuid",
-						  "namespace_id":1,
-						  "rule_group":"arulegroup",
-						  "no_data_state":"NoData",
-						  "exec_err_state":"Alerting"
-					   }
-					}
-				 ]
-			  }
-		   ]
-		}`
-		assert.JSONEq(t, expectedGetNamespaceResponseBody, body)
-	}
-
-	// Remove permissions from folder1.
-	removeFolderPermission(t, permissionsStore, 1, userID, org.RoleEditor, "folder1")
-	apiClient.ReloadCachedPermissions(t)
-	{
-		u := fmt.Sprintf("http://grafana:password@%s/api/ruler/grafana/api/v1/rules", grafanaListedAddr)
-		// nolint:gosec
-		resp, err := http.Get(u)
-		require.NoError(t, err)
-		t.Cleanup(func() {
-			err := resp.Body.Close()
-			require.NoError(t, err)
+		t.Run("Get by folder returns groups in folder", func(t *testing.T) {
+			_, status, _ := apiClient.GetAllRulesGroupInFolderWithStatus(t, "folder2")
+			require.Equal(t, http.StatusForbidden, status)
 		})
-		b, err := io.ReadAll(resp.Body)
-		require.NoError(t, err)
 
-		assert.Equal(t, resp.StatusCode, 200)
-		require.JSONEq(t, `{}`, string(b))
-	}
+		t.Run("Get group returns a single group", func(t *testing.T) {
+			u := fmt.Sprintf("%s/api/ruler/grafana/api/v1/rules/folder2/arulegroup", apiClient.url)
+			// nolint:gosec
+			resp, err := http.Get(u)
+			require.NoError(t, err)
+			defer func() {
+				_ = resp.Body.Close()
+			}()
+			assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+		})
+
+		t.Run("Export returns all rules", func(t *testing.T) {
+			export, status, _ := apiClient.ExportRulesWithStatus(t, &apimodels.AlertRulesExportParameters{
+				ExportQueryParams: apimodels.ExportQueryParams{Format: "json"},
+			})
+			require.Equal(t, http.StatusOK, status)
+			require.Len(t, export.Groups, 1)
+			require.Equal(t, "folder1", export.Groups[0].Folder)
+		})
+
+		t.Run("Export from one folder", func(t *testing.T) {
+			_, status, _ := apiClient.ExportRulesWithStatus(t, &apimodels.AlertRulesExportParameters{
+				ExportQueryParams: apimodels.ExportQueryParams{Format: "json"},
+				FolderUID:         []string{"folder2"},
+			})
+			assert.Equal(t, http.StatusUnauthorized, status)
+		})
+
+		t.Run("Export from one group", func(t *testing.T) {
+			_, status, _ := apiClient.ExportRulesWithStatus(t, &apimodels.AlertRulesExportParameters{
+				ExportQueryParams: apimodels.ExportQueryParams{Format: "json"},
+				FolderUID:         []string{"folder2"},
+				GroupName:         "arulegroup",
+			})
+			assert.Equal(t, http.StatusForbidden, status)
+		})
+
+		t.Run("Export single rule", func(t *testing.T) {
+			uid := allRules["folder2"][0].Rules[0].GrafanaManagedAlert.UID
+			_, status, _ := apiClient.ExportRulesWithStatus(t, &apimodels.AlertRulesExportParameters{
+				ExportQueryParams: apimodels.ExportQueryParams{Format: "json"},
+				RuleUID:           uid,
+			})
+			require.Equal(t, http.StatusForbidden, status)
+		})
+
+		t.Run("when all permissions are revoked", func(t *testing.T) {
+			removeFolderPermission(t, permissionsStore, 1, userID, org.RoleEditor, "folder1")
+			apiClient.ReloadCachedPermissions(t)
+
+			rules, status, _ := apiClient.GetAllRulesWithStatus(t)
+			require.Equal(t, http.StatusOK, status)
+			require.Empty(t, rules)
+
+			export, status, _ := apiClient.ExportRulesWithStatus(t, &apimodels.AlertRulesExportParameters{
+				ExportQueryParams: apimodels.ExportQueryParams{Format: "json"},
+			})
+			require.Equal(t, http.StatusNotFound, status)
+			require.Empty(t, export.Groups)
+		})
+	})
+
 }
 
-func createRule(t *testing.T, client apiClient, folder string) {
+func createRule(t *testing.T, client apiClient, folder string) apimodels.PostableRuleGroupConfig {
 	t.Helper()
 
 	interval, err := model.ParseDuration("1m")
@@ -322,6 +274,7 @@ func createRule(t *testing.T, client apiClient, folder string) {
 	status, body := client.PostRulesGroup(t, folder, &rules)
 	assert.Equal(t, http.StatusAccepted, status)
 	require.JSONEq(t, `{"message":"rule group updated successfully"}`, body)
+	return rules
 }
 
 func TestIntegrationAlertRuleConflictingTitle(t *testing.T) {
