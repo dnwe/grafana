@@ -20,11 +20,11 @@ export function useOpenAIStream(
   error: Error | undefined;
   value:
     | {
-        enabled: any;
+        enabled: boolean | undefined;
         stream?: undefined;
       }
     | {
-        enabled: any;
+        enabled: boolean | undefined;
         stream: Subscription;
       }
     | undefined;
@@ -34,8 +34,6 @@ export function useOpenAIStream(
   // The latest reply from the LLM.
   const [reply, setReply] = useState('');
 
-  // const [started, setStarted] = useState(false);
-  // const [finished, setFinished] = useState(true);
   const [inProgress, setInProgress] = useState(false);
 
   const { loading, error, value } = useAsync(async () => {
@@ -65,7 +63,7 @@ export function useOpenAIStream(
         // functionality to update state, e.g. recording when the stream
         // has completed.
         // The operator decision tree on the rxjs website is a useful resource:
-        // https://rxjs.dev/operator-decision-tree.
+        // https://rxjs.dev/operator-decision-tree.)
       );
     // Subscribe to the stream and update the state for each returned value.
     return {
@@ -75,6 +73,12 @@ export function useOpenAIStream(
         complete: () => {
           setInProgress(false);
           setMessages([]);
+        },
+        error: (error) => {
+          setInProgress(false);
+          setMessages([]);
+          console.log('Error within observable');
+          console.log(error.message);
         },
       }),
     };

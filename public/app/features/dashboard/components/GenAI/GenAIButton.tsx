@@ -33,8 +33,10 @@ export const GenAIButton = ({
 }: GenAIButtonProps) => {
   const styles = useStyles2(getStyles);
 
-  // TODO: Implement error handling (use error object from hook)
-  const { setMessages, reply, inProgress, value } = useOpenAIStream(OPEN_AI_MODEL, temperature);
+  // FIXME: Using fake model to trigger errors
+  const { setMessages, reply, inProgress, value, error } = useOpenAIStream('foo', temperature);
+
+  console.log('GenAIButton', { reply, inProgress, value, error });
 
   const onClick = (e: React.MouseEvent<HTMLButtonElement>) => {
     onClickProp?.(e);
@@ -43,34 +45,55 @@ export const GenAIButton = ({
 
   // Todo: Consider other options for `"` sanitation
   if (inProgress) {
-    onGenerate(reply.replace(/"/g, ''));
+    onGenerate(reply.replace(/^"|"$/g, ''));
   }
 
   const getIcon = () => {
+    if (error || !value?.enabled) {
+      return 'exclamation-circle';
+    }
     if (inProgress) {
       return undefined;
     }
-    if (!value?.enabled) {
-      return 'exclamation-circle';
-    }
     return 'ai';
+  };
+
+  const getTooltipContent = () => {
+    if (error) {
+      return error.message;
+    }
+    if (!value?.enabled) {
+      return (
+        <span>
+          The LLM plugin is not correctly configured. See your <Link href={`/plugins/grafana-llm-app`}>settings</Link>{' '}
+          and enable your plugin.
+        </span>
+      );
+    }
+    return '';
+  };
+
+  const getText = () => {
+    if (error) {
+      return 'Retry';
+    }
+
+    return !inProgress ? text : loadingText;
   };
 
   return (
     <div className={styles.wrapper}>
       {inProgress && <Spinner size={14} />}
-      <Tooltip
-        show={value?.enabled ? false : undefined}
-        interactive
-        content={
-          <span>
-            The LLM plugin is not correctly configured. See your <Link href={`/plugins/grafana-llm-app`}>settings</Link>{' '}
-            and enable your plugin.
-          </span>
-        }
-      >
-        <Button icon={getIcon()} onClick={onClick} fill="text" size="sm" disabled={inProgress || !value?.enabled}>
-          {!inProgress ? text : loadingText}
+      <Tooltip show={value?.enabled ? false : undefined} interactive content={getTooltipContent()}>
+        <Button
+          icon={getIcon()}
+          onClick={onClick}
+          fill="text"
+          size="sm"
+          disabled={inProgress || (!value?.enabled && !error)}
+          variant={error ? 'destructive' : 'primary'}
+        >
+          {getText()}
         </Button>
       </Tooltip>
     </div>
